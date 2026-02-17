@@ -507,6 +507,8 @@ class LivingLifePage : public GamePage, public ActionListener {
         virtual void keybindKeyDown( int inKey );
         virtual void keybindKeyUp( int inKey );
 
+        void addDebugMessage( char *message );
+
         void vogMove( int x, int y );
 
         void vogMoveCamera( float newScreenViewCenterX, float newScreenViewCenterY );
