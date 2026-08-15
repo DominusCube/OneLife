@@ -874,8 +874,8 @@ vector<TransRecord*> minitech::getUsesTrans(int objId) {
         
         TransRecord *trans = usesTrans->getElementDirect( t );
         
-        int idA = trans->actor;
-        int idB = trans->target;
+        // int idA = trans->actor;
+        // int idB = trans->target;
         int idC = trans->newActor;
         int idD = trans->newTarget;
         
@@ -933,7 +933,7 @@ vector<TransRecord*> minitech::getUsesTrans(int objId) {
     // }
 
     vector<TransRecord*> results;
-    for( int t=0; t<temp.size(); t++ ) {
+    for( size_t t=0; t<temp.size(); t++ ) {
         TransRecord *trans = temp[t];
         int idA = trans->actor;
         int idB = trans->target;
@@ -978,8 +978,8 @@ vector<TransRecord*> minitech::getProdTrans(int objId) {
         
         TransRecord *trans = prodTrans->getElementDirect( t );
         
-        int idA = trans->actor;
-        int idB = trans->target;
+        // int idA = trans->actor;
+        // int idB = trans->target;
         int idC = trans->newActor;
         int idD = trans->newTarget;
 
@@ -1037,7 +1037,7 @@ vector<TransRecord*> minitech::getProdTrans(int objId) {
     // }
     
     vector<TransRecord*> results;
-    for( int t=0; t<temp.size(); t++ ) {
+    for( size_t t=0; t<temp.size(); t++ ) {
         TransRecord *trans = temp[t];
         int idA = trans->actor;
         int idB = trans->target;
