@@ -1453,6 +1453,13 @@ void minitech::updateDrawTwoTech() {
                 ) {
                     // out
                     inOrOutContainmentTrans = 1;
+                } else {
+                    // both newActor and newTarget are containers
+                    if( newActor->permanent ) {
+                        inOrOutContainmentTrans = 1;
+                    } else {
+                        inOrOutContainmentTrans = 0;
+                    }
                 }
             }
 
