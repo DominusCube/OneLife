@@ -555,7 +555,7 @@ class LivingLifePage : public GamePage, public ActionListener {
         void usePocket( int clothingID, bool replace = false, bool remove = false );
         void useOnSelf();
         void takeOffClothing();
-        void takeOffBackpack( int useOrRemove = 0 );
+        void takeOffBackpack();
         void setOurSendPosXY(int &x, int &y);
         void drawTileVanillaHighlight( int x, int y, FloatColor floatColor, bool flashing = false, bool border = true );
         void drawTileVanillaRainbowHighlight( int x, int y );

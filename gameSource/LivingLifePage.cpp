@@ -3907,14 +3907,14 @@ void LivingLifePage::useBackpack(bool replace) {
     char msg[32];
     if( ourLiveObject->holdingID > 0 ) {
         if (replace) {
-            sprintf( msg, "DROP %d %d %d#", x, y, clothingSlot ); // SWAP
+            sprintf( msg, "DROP %d %d %d#", x, y, clothingSlot );
         } else {
-            sprintf( msg, "SELF %d %d %d -1#", x, y, clothingSlot ); // PUT IN
+            sprintf( msg, "SELF %d %d %d#", x, y, clothingSlot );
         }
         setNextActionMessage( msg, x, y );
         nextActionDropping = true;
     } else {
-        sprintf( msg, "SREMV %d %d %d %d#", x, y, clothingSlot, -2 ); // TAKE OUT
+        sprintf( msg, "SREMV %d %d %d %d#", x, y, clothingSlot, -1 );
         setNextActionMessage( msg, x, y );
     }
 }
@@ -4005,14 +4005,11 @@ void LivingLifePage::takeOffClothing() {
     return;
 }
 
-void LivingLifePage::takeOffBackpack(int useOrRemove) {
+void LivingLifePage::takeOffBackpack() {
     LiveObject *ourLiveObject = getOurLiveObject();
     
     char message[32];
-    int extraFlag = 0;
-    if( useOrRemove == 1 ) extraFlag = -2;
-    if( useOrRemove == 2 ) extraFlag = -3;
-    sprintf(message, "SELF %i %i 5 %d#", ourLiveObject->xd, ourLiveObject->yd, extraFlag);
+    sprintf(message, "SELF %i %i 5#", ourLiveObject->xd, ourLiveObject->yd);
     sendToServerSocket( message );
 }
 
@@ -4311,8 +4308,6 @@ LivingLifePage::LivingLifePage()
     KeybindManager::registerAction( "useBackpackReplace", "REPLACE", "shift+q" );
 
     KeybindManager::registerAction( "selfBackpackTransRemv", "TRANS/REMV", "b" );
-    KeybindManager::registerAction( "selfBackpackTrans", "TRANS", "shift+b" );
-    KeybindManager::registerAction( "selfBackpackRemv", "REMV", "ctrl+b", { .postComment = "" } );
 
     KeybindManager::registerAction( "eatSelf", "EAT/SELF", "e", { .preComment = "// Player actions" } );
     KeybindManager::registerAction( "removeClothing", "REMOVE CLOTHING", "shift+e" );
@@ -29169,14 +29164,6 @@ void LivingLifePage::keybindKeyDown( int inKey ) {
                 }
             if( KeybindManager::isActive( "selfBackpackTransRemv" ) ) {
                 takeOffBackpack();
-                return;
-                }
-            if( KeybindManager::isActive( "selfBackpackTrans" ) ) {
-                takeOffBackpack( 1 );
-                return;
-                }
-            if( KeybindManager::isActive( "selfBackpackRemv" ) ) {
-                takeOffBackpack( 2 );
                 return;
                 }
 
