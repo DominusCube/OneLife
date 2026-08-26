@@ -211,6 +211,9 @@ char familyDisplayEnabled = false;
 char dangerousTileEnabled = false;
 char alwaysShowPlayerLabelEnabled = false;
 
+int delayReduction = 0;
+
+
 static JenkinsRandomSource randSource( 340403 );
 static JenkinsRandomSource remapRandSource( 340403 );
 
@@ -4372,6 +4375,15 @@ LivingLifePage::LivingLifePage()
 
 
     KeybindManager::init();
+
+    delayReduction = SettingsManager::getIntSetting( "delayReduction", 0 );
+
+    if( delayReduction < 0 ) {
+        delayReduction = 0;
+        }
+    else if( delayReduction > 50 ) {
+        delayReduction = 50;
+        }
 
     updateObjectSearchArray();
 
@@ -24264,6 +24276,15 @@ void LivingLifePage::step() {
                 }
             }
         
+        double delay = 0.166;
+        // Don't apply delay reduction for baby pickup. These are other
+        // players, not in-game objects, so they are more likely to be annoyed
+        // by being juggled extra fast. It is also possible (but rare) for
+        // excessive baby juggling to cause a client-side desync, and delay
+        // reduction might increase the odds of accidentally triggering this.
+        if (0 != strncmp("BABY ", nextActionMessageToSend, 5)) {
+            delay = delay * (50 - delayReduction) / 50;
+            }
         
         // wait until 
         // we've stopped moving locally
@@ -24273,7 +24294,7 @@ void LivingLifePage::step() {
         // AND server agrees with our position
         if( ! ourLiveObject->inMotion && 
             currentTime - ourLiveObject->pendingActionAnimationStartTime > 
-            0.166 - ourLiveObject->lastResponseTimeDelta &&
+            delay - ourLiveObject->lastResponseTimeDelta &&
             ourLiveObject->xd == ourLiveObject->xServer &&
             ourLiveObject->yd == ourLiveObject->yServer ) {
             
