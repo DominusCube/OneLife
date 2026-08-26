@@ -28181,27 +28181,6 @@ void LivingLifePage::keyDown( unsigned char inASCII ) {
 
     if (!mSayField.isFocused() && !vogMode &&
         minitech::livingLifeKeyDown(inASCII)) return;
-
-    if( mSayField.isFocused() ) {
-        if( inASCII >= 48 && inASCII <= 57 ) {
-            char *typedText = mSayField.getText();
-            int n = strlen( typedText );
-            if( !( n > 5 && 
-                typedText[0] == '/' &&
-                typedText[1] == 'M' &&
-                typedText[2] == 'A' &&
-                typedText[3] == 'R' &&
-                typedText[4] == 'K' &&
-                typedText[5] == ' ' )
-            ) {
-                typedText[n-1] = '\0';
-                mSayField.setText( typedText );
-                delete [] typedText;
-                return;
-                }
-            delete [] typedText;
-            }
-        }
     
     switch( inASCII ) {
         /*
