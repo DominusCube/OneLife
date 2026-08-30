@@ -775,23 +775,12 @@ static char isFood( int inID );
 extern int *becomeFoodMap;
 
 static char* readYumChainFile(){
-    // open file
-    yumChainFile = fopen( "yumChain.txt", "r" );
-    if (!yumChainFile) return NULL;
 
-    // find length
-    fseek (yumChainFile, 0, SEEK_END);
-    int length = ftell (yumChainFile);
-    fseek (yumChainFile, 0, SEEK_SET);
+    File yumChainFile( NULL, "yumChain.txt" );
 
-    // read file and close it
-    char *fileText = new char;
-    if (fileText)
-    {
-        fread (fileText, 1, length, yumChainFile);
-    }
-    fclose (yumChainFile);
-    return fileText; // should be deleted elsewhere
+    char *contents = yumChainFile.readFileContents();
+    
+    return contents;
 }
 
 static void recoverYumChainFromFile(const int life_id){
