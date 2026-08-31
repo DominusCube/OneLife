@@ -58,7 +58,7 @@ time_t last_discord_setting_change = 0;
 #endif // USE_DISCORD
 
 SettingsPage::SettingsPage()
-        : mBackground( "background.tga", 0.75f ),
+        : mBackground( "background.tga", 0.60f ),
           
           // Left Pane
           mRestartButton( mainFont, 360, -272, translate( "restartButton" ) ),
