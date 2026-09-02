@@ -1316,7 +1316,7 @@ void SettingsPage::draw( doublePair inViewCenter,
     
     // There is the Fixed Zoom Level label text to the right of this checkbox
     // Redraw this to get the cursorTip drawn on top
-    mEnableFOVBox.base_draw( lastScreenViewCenter, viewWidth );
+    if( mEnableFOVBox.isVisible() ) mEnableFOVBox.base_draw( lastScreenViewCenter, viewWidth );
 
     // Redraw the lefe pane buttons to get the cursorTip drawn on top
     mBackButton.base_draw( lastScreenViewCenter, viewWidth );
