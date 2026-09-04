@@ -129,7 +129,15 @@ static double lastVogMoveTime = 0;
 static char vogFollowMode = false;
 static int vogFollowPlayerID = -1;
 
-static char debugMode = false;
+static int debugMode = 0;
+static SimpleVector<char *> debugMessages;
+
+void LivingLifePage::addDebugMessage( char *message ) {
+    debugMessages.push_back( message );
+    if( debugMessages.size() > 30 ) {
+        debugMessages.deallocateStringElement( 0 );
+        }
+    }
 
 static doublePair vogPos = { 0, 0 };
 
@@ -190,6 +198,7 @@ extern float gui_fov_scale_hud;
 extern float gui_fov_target_scale_hud;
 extern int gui_fov_offset_x;
 extern int gui_fov_offset_y;
+extern float fovMax;
 static SpriteHandle guiPanelLeftSprite;
 static SpriteHandle guiPanelTileSprite;
 static SpriteHandle guiPanelRightSprite;
@@ -201,6 +210,9 @@ char objectSearchEnabled = false;
 char familyDisplayEnabled = false;
 char dangerousTileEnabled = false;
 char alwaysShowPlayerLabelEnabled = false;
+
+int delayReduction = 0;
+
 
 static JenkinsRandomSource randSource( 340403 );
 static JenkinsRandomSource remapRandSource( 340403 );
@@ -755,11 +767,86 @@ char runningYumFinder = false;
 int livingLifeStepCount = 0;
 int bouncingAnimationStepOffset = 0;
 
+static FILE *yumChainFile = NULL;
 SimpleVector<int> yummyFoodChain;
 
 static char isFood( int inID );
 
 extern int *becomeFoodMap;
+
+static char* readYumChainFile(){
+
+    File yumChainFile( NULL, "yumChain.txt" );
+
+    char *contents = yumChainFile.readFileContents();
+    
+    return contents;
+}
+
+static void recoverYumChainFromFile(const int life_id){
+    char *fileText = readYumChainFile();
+
+    if (!fileText) return;
+
+    int numLines = 0;
+    char **lines = split( fileText, "\n", &numLines );
+    delete [] fileText;
+
+    int next = 0;
+
+    int saved_life_id;
+    sscanf( lines[next], "life_id=%d", &saved_life_id );
+    next++;
+
+    if (saved_life_id != life_id) return; // wrong life :(
+
+    while( next < numLines ) {
+        int food_id;
+        sscanf( lines[next], "%d", &food_id );
+        yummyFoodChain.push_back( food_id );
+        next++;
+    }
+
+}
+
+static void initYumChainFile(const int life_id) {
+    char should_create_new_file = false;
+
+    char *fileText = readYumChainFile();
+
+    if (fileText){ // file exists, check if the saved life is the same as current life
+        int numLines = 0;
+        char **lines = split( fileText, "\n", &numLines );
+        delete [] fileText;
+        int saved_life_id;
+        sscanf( lines[0], "life_id=%d", &saved_life_id );
+        if (saved_life_id == life_id){
+            recoverYumChainFromFile(saved_life_id);
+        }
+        else {
+            should_create_new_file = true;
+        }
+    }
+    else {
+        should_create_new_file = true;
+    }
+
+    if (should_create_new_file) {
+        yumChainFile = fopen( "yumChain.txt", "w" );
+        if (yumChainFile) {
+            fprintf( yumChainFile, "life_id=%d\n", life_id );
+            fclose( yumChainFile );
+        }
+    }
+}
+
+static void addYumToYumChainFile(const int yum_id) {
+    yumChainFile = fopen( "yumChain.txt", "a" );
+    if (yumChainFile) {
+        fprintf( yumChainFile, "%d\n", yum_id );
+        fclose( yumChainFile );
+    }
+}
 
 static int getFoodParent( int oid ) {
     oid = getObjectParent( oid );
@@ -770,6 +857,7 @@ static void addToYummyFoodChain( int foodID ) {
     foodID = getFoodParent( foodID );
     if( yummyFoodChain.getElementIndex( foodID ) != -1 ) return;
     yummyFoodChain.push_back( foodID );
+    addYumToYumChainFile( foodID );
     }
 
 char livingLifeBouncingYOffsetToggle = true;
@@ -3745,7 +3833,6 @@ static void addNewAnim( LiveObject *inObject, AnimType inNewAnim ) {
 // queue it here
 static char *nextActionMessageToSend = NULL;
 static char nextActionEating = false;
-static char nextActionDropping = false;
 
 
 // block move until next PLAYER_UPDATE received after action sent
@@ -3806,9 +3893,32 @@ void LivingLifePage::setNextActionMessage(const char* msg, int x, int y) {
     playerActionTargetX = x;
     playerActionTargetY = y;
     playerActionTargetNotAdjacent = true;
-    nextActionDropping = false;
     nextActionEating = false;
     nextActionMessageToSend = autoSprintf( "%s", msg );
+}
+
+static bool pendingDropAcknowledgement;
+
+bool LivingLifePage::nextActionIs(const char *action) {
+	if (nextActionMessageToSend == NULL)
+		return false;
+
+	size_t len = strlen(action);
+
+	return    strncmp(nextActionMessageToSend, action, len) == 0
+		   && (nextActionMessageToSend[len] == 0 || nextActionMessageToSend[len] == ' ');
+}
+
+void LivingLifePage::onDropSent() {
+	pendingDropAcknowledgement = true;
+}
+
+void LivingLifePage::onHoldingChange(int previous, int current) {
+	/* We can't just check for current == 0 because dropping into a bp/pocket
+	 * swaps. This isn't perfect, since it's possible we're seeing a PU from
+	 * a past action if there's enough lag; if the server doesn't coalesce
+	 * updates, this could potentially be improved by making this a counter. */
+	pendingDropAcknowledgement = false;
 }
 
 int LivingLifePage::getObjId( int tileX, int tileY ) {
@@ -3896,19 +4006,25 @@ void LivingLifePage::useBackpack(bool replace) {
     int x, y;
     setOurSendPosXY(x, y);
 
-    char msg[32];
+    char msg[32] = "";
+
     if( ourLiveObject->holdingID > 0 ) {
         if (replace) {
-            sprintf( msg, "DROP %d %d %d#", x, y, clothingSlot ); // SWAP
-        } else {
-            sprintf( msg, "SELF %d %d %d -1#", x, y, clothingSlot ); // PUT IN
-        }
-        setNextActionMessage( msg, x, y );
-        nextActionDropping = true;
+            sprintf( msg, "DROP %d %d %d#", x, y, clothingSlot );
+		} else {
+			/* If this SELF message is sent without an item in hand (from the
+			 * server's perspective!) the bp is taken into hand. */
+			if (!pendingDropAcknowledgement) {
+				sprintf( msg, "SELF %d %d %d#", x, y, clothingSlot );
+			}
+		}
     } else {
-        sprintf( msg, "SREMV %d %d %d %d#", x, y, clothingSlot, -2 ); // TAKE OUT
-        setNextActionMessage( msg, x, y );
-    }
+        sprintf( msg, "SREMV %d %d %d %d#", x, y, clothingSlot, -1 );
+	}
+
+	if (msg[0] != 0) {
+		setNextActionMessage( msg, x, y );
+	}
 }
 
 void LivingLifePage::usePocket(int clothingID, bool replace, bool remove) {
@@ -3922,10 +4038,13 @@ void LivingLifePage::usePocket(int clothingID, bool replace, bool remove) {
         if (replace) {
             sprintf( msg, "DROP %d %d %d#", x, y, clothingID );
         } else {
-            sprintf( msg, "SELF %d %d %d#", x, y, clothingID );
+			/* If this SELF message is sent without an item in hand (from the
+			 * server's perspective!) the bp is taken into hand. */
+			if (!pendingDropAcknowledgement) {
+                sprintf( msg, "SELF %d %d %d#", x, y, clothingID );
+            }
         }
         setNextActionMessage( msg, x, y );
-        nextActionDropping = true;
     } else {
         if (remove) {
             sprintf( msg, "SELF %d %d %d#", x, y, clothingID );
@@ -3997,14 +4116,11 @@ void LivingLifePage::takeOffClothing() {
     return;
 }
 
-void LivingLifePage::takeOffBackpack(int useOrRemove) {
+void LivingLifePage::takeOffBackpack() {
     LiveObject *ourLiveObject = getOurLiveObject();
     
     char message[32];
-    int extraFlag = 0;
-    if( useOrRemove == 1 ) extraFlag = -2;
-    if( useOrRemove == 2 ) extraFlag = -3;
-    sprintf(message, "SELF %i %i 5 %d#", ourLiveObject->xd, ourLiveObject->yd, extraFlag);
+    sprintf(message, "SELF %i %i 5#", ourLiveObject->xd, ourLiveObject->yd);
     sendToServerSocket( message );
 }
 
@@ -4251,7 +4367,7 @@ LivingLifePage::LivingLifePage()
         }
 
     if( SettingsManager::getIntSetting( "debugInfo", 0 ) ) {
-        debugMode = true;
+        debugMode = 1;
         }
 
     if( SettingsManager::getIntSetting( "coordinatesEnabled", 0 ) ) {
@@ -4303,8 +4419,6 @@ LivingLifePage::LivingLifePage()
     KeybindManager::registerAction( "useBackpackReplace", "REPLACE", "shift+q" );
 
     KeybindManager::registerAction( "selfBackpackTransRemv", "TRANS/REMV", "b" );
-    KeybindManager::registerAction( "selfBackpackTrans", "TRANS", "shift+b" );
-    KeybindManager::registerAction( "selfBackpackRemv", "REMV", "ctrl+b", { .postComment = "" } );
 
     KeybindManager::registerAction( "eatSelf", "EAT/SELF", "e", { .preComment = "// Player actions" } );
     KeybindManager::registerAction( "removeClothing", "REMOVE CLOTHING", "shift+e" );
@@ -4337,6 +4451,15 @@ LivingLifePage::LivingLifePage()
 
 
     KeybindManager::init();
+
+    delayReduction = SettingsManager::getIntSetting( "delayReduction", 0 );
+
+    if( delayReduction < 0 ) {
+        delayReduction = 0;
+        }
+    else if( delayReduction > 50 ) {
+        delayReduction = 50;
+        }
 
     updateObjectSearchArray();
 
@@ -8725,6 +8848,7 @@ void LivingLifePage::draw( doublePair inViewCenter,
             // for main floor, and left and right hugging floor
             // 0 to skip a pass
             int passIDs[3] = { 0, 0, 0 };
+            char fullTileHuggingFloor = false;
             
             if( oID > 0 ) {
                 passIDs[0] = oID;
@@ -8752,7 +8876,19 @@ void LivingLifePage::draw( doublePair inViewCenter,
                         
                         }
                     }
-                
+
+                if( passIDs[1] > 0 && passIDs[1] == passIDs[2] ) {
+                    // Same floor is auto-extending into this wall tile
+                    // from both sides.  Draw it once as a synthetic
+                    // hugging floor instead of drawing two adjacent
+                    // stenciled halves, which can disappear on some
+                    // OpenGL drivers.
+                    passIDs[0] = passIDs[1];
+                    passIDs[1] = 0;
+                    passIDs[2] = 0;
+                    fullTileHuggingFloor = true;
+                    }
+
 
                 if( ! drawHuggingFloor ) {
                     continue;
@@ -8809,7 +8945,7 @@ void LivingLifePage::draw( doublePair inViewCenter,
                     mMapFloorAnimationFrameCount[ mapI ] / 60.0;
                 
 
-                if( p > 0 ) {
+                if( p > 0 || fullTileHuggingFloor ) {
                     // floor hugging pass
                     
                     int numLayers = getObject( oID )->numSprites;
@@ -13781,6 +13917,24 @@ void LivingLifePage::draw( doublePair inViewCenter,
         if( debugLine != NULL ) delete [] debugLine;
         }
 
+    // debug messages on screen
+    if( debugMode == 2 ) {
+        doublePair pos = lastScreenViewCenter;
+        pos.x -= 640 * gui_fov_scale_hud;
+        pos.y += 380 * gui_fov_scale_hud;
+        for( int i=0; i<debugMessages.size(); i++ ) {
+            char *message = debugMessages.getElementDirect(i);
+            pos.x -= 1 * gui_fov_scale_hud;
+            pos.y += 1 * gui_fov_scale_hud;
+            setDrawColor( 0.0, 0.0, 0.0, 1.0 );
+            tinyHandwritingFont->drawString( message, pos, alignLeft );
+            pos.x += 1 * gui_fov_scale_hud;
+            pos.y -= 1 * gui_fov_scale_hud;
+            setDrawColor( 1.0, 1.0, 1.0, 1.0 );
+            tinyHandwritingFont->drawString( message, pos, alignLeft );
+            pos.y -= 24 * gui_fov_scale_hud;
+            }
+        }
     }
 
 
@@ -17822,6 +17976,12 @@ void LivingLifePage::step() {
                     
                     minitech::changeScale( 1.25 * gui_fov_scale_hud );
                     minitech::initOnBirth();
+
+                    if ( ! SettingsManager::getIntSetting( "fovEnabled", 0 ) ) {
+                        // apply zoom level here
+                        // because we need default zoom level in Loading screen
+                        changeFOV( SettingsManager::getFloatSetting( "fovFixedScale", 1.0f ) );
+                        }
                     
                     newbieTips::drawTipsArrow = false;
                     
@@ -19244,6 +19404,8 @@ void LivingLifePage::step() {
                                 r->temporaryExpireETA = 
                                     game_getCurrentTime() + 30;
                                 }
+                            
+                            onHoldingChange(existing->holdingID, o.holdingID);
                             }
                         
                         
@@ -21164,6 +21326,7 @@ void LivingLifePage::step() {
 
                     // clear yummy food chain
                     yummyFoodChain.deleteAll();
+                    initYumChainFile(ourID);
 
                     // don't clear object search
                     // allow searches across lives
@@ -21182,6 +21345,9 @@ void LivingLifePage::step() {
                         }
 
                     }
+                else { // same ID as last time, disconnect/reconnect or smth
+                    recoverYumChainFromFile(ourID);
+                }
                 homePosStack.push_back_other( &oldHomePosStack );
 
                 lastPlayerID = ourID;
@@ -24190,6 +24356,15 @@ void LivingLifePage::step() {
                 }
             }
         
+        double delay = 0.166;
+        // Don't apply delay reduction for baby pickup. These are other
+        // players, not in-game objects, so they are more likely to be annoyed
+        // by being juggled extra fast. It is also possible (but rare) for
+        // excessive baby juggling to cause a client-side desync, and delay
+        // reduction might increase the odds of accidentally triggering this.
+        if (0 != strncmp("BABY ", nextActionMessageToSend, 5)) {
+            delay = delay * (50 - delayReduction) / 50;
+            }
         
         // wait until 
         // we've stopped moving locally
@@ -24199,7 +24374,7 @@ void LivingLifePage::step() {
         // AND server agrees with our position
         if( ! ourLiveObject->inMotion && 
             currentTime - ourLiveObject->pendingActionAnimationStartTime > 
-            0.166 - ourLiveObject->lastResponseTimeDelta &&
+            delay - ourLiveObject->lastResponseTimeDelta &&
             ourLiveObject->xd == ourLiveObject->xServer &&
             ourLiveObject->yd == ourLiveObject->yServer ) {
             
@@ -24218,6 +24393,9 @@ void LivingLifePage::step() {
             ourLiveObject->pendingActionAnimationStartTime = 
                 game_getCurrentTime();
 
+            if (nextActionIs("DROP")) {
+                onDropSent();
+            }
 
             if( nextActionEating ) {
                 // don't play eating sound here until 
@@ -24663,11 +24841,16 @@ void LivingLifePage::makeActive( char inFresh ) {
 
     if( !inFresh ) {
     
-        // reset fov to default when we return from settings page
-        // and we just turned off fov
         if ( ! SettingsManager::getIntSetting( "fovEnabled", 0 ) ) {
-          changeFOV( 1.0f );
-          }
+            // if we turn off mousewheel zooming
+            // then update zoom level according to the specified fixed level
+            changeFOV( SettingsManager::getFloatSetting( "fovFixedScale", 1.0f ) );
+            }
+        else {
+            // otherwise, reset zoom level to default
+            changeFOV( 1.0 );
+            }
+
       
         //reset camera if LivingLifePage is made active again
         LiveObject *ourLiveObject = getOurLiveObject();
@@ -26482,8 +26665,6 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
 
 
     nextActionEating = false;
-    nextActionDropping = false;
-    
 
 
     if ( !mForceGroundClick && mouseButton == MouseButton::MIDDLE ) {
@@ -26545,7 +26726,6 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
                         autoSprintf( "DROP %d %d %d#",
                                      sendX( clickDestX ), sendY( clickDestY ), 
                                      p.hitClothingIndex  );
-                    nextActionDropping = true;
                     printf( "Add to own clothing container\n" );
                     }
                 else {
@@ -27329,11 +27509,9 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
                 
                 if( ourLiveObject->holdingID != 0 ) {
                     action = "DROP";
-                    nextActionDropping = true;
                     }
                 else {
                     action = "USE";
-                    nextActionDropping = false;
                     }
                 
                 send = true;
@@ -27476,7 +27654,6 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
                      getNumContainerSlots( destID ) > 0 &&
                      destNumContained <= getNumContainerSlots( destID ) ) {
                 action = "DROP";
-                nextActionDropping = true;
                 send = true;
                 }
             else if( modClick && ourLiveObject->holdingID != 0 &&
@@ -27485,7 +27662,6 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
                      ! targetIsTrulyPermanent
                      ) {
                 action = "DROP";
-                nextActionDropping = true;
                 send = true;
                 }
             else if( destID != 0 ) {
@@ -27542,7 +27718,6 @@ void LivingLifePage::pointerDown( float inX, float inY ) {
             
             if( strcmp( action, "DROP" ) == 0 ) {
                 delete [] extra;
-                nextActionDropping = true;
                 extra = stringDuplicate( " -1" );
                 }
 
@@ -28107,27 +28282,6 @@ void LivingLifePage::keyDown( unsigned char inASCII ) {
 
     if (!mSayField.isFocused() && !vogMode &&
         minitech::livingLifeKeyDown(inASCII)) return;
-
-    if( mSayField.isFocused() ) {
-        if( inASCII >= 48 && inASCII <= 57 ) {
-            char *typedText = mSayField.getText();
-            int n = strlen( typedText );
-            if( !( n > 5 && 
-                typedText[0] == '/' &&
-                typedText[1] == 'M' &&
-                typedText[2] == 'A' &&
-                typedText[3] == 'R' &&
-                typedText[4] == 'K' &&
-                typedText[5] == ' ' )
-            ) {
-                typedText[n-1] = '\0';
-                mSayField.setText( typedText );
-                delete [] typedText;
-                return;
-                }
-            delete [] typedText;
-            }
-        }
     
     switch( inASCII ) {
         /*
@@ -28378,7 +28532,17 @@ void LivingLifePage::keyDown( unsigned char inASCII ) {
                 vogScrollingMode = !vogScrollingMode;
                 }
             break;
-        // case 'k':
+        case 'k':
+            if( !TextField::isAnyFocused() ) {
+                if( debugMode == 1 ) {
+                    debugMessages.deallocateStringElements();
+                    debugMode = 2;
+                    }
+                else if( debugMode == 2 ) {
+                    debugMode = 1;
+                    }
+                }
+            break;
         case 'K':
             break;
         case 9: // tab
@@ -29122,14 +29286,6 @@ void LivingLifePage::keybindKeyDown( int inKey ) {
                 takeOffBackpack();
                 return;
                 }
-            if( KeybindManager::isActive( "selfBackpackTrans" ) ) {
-                takeOffBackpack( 1 );
-                return;
-                }
-            if( KeybindManager::isActive( "selfBackpackRemv" ) ) {
-                takeOffBackpack( 2 );
-                return;
-                }
 
             if( KeybindManager::isActive( "eatSelf" ) ) {
                 useOnSelf();
@@ -29354,8 +29510,8 @@ void LivingLifePage::changeFOV( float newScale ) {
     if( newScale < 1.0f ) {
         newScale = 1.0f;
         }
-    else if( newScale > 10.0f ) {
-        newScale = 10.0f;
+    else if( newScale > fovMax ) {
+        newScale = fovMax;
         }
 
     LiveObject *ourLiveObject = getOurLiveObject();
@@ -29522,7 +29678,6 @@ void LivingLifePage::actionBetaRelativeToMe( int x, int y ) {
     else if (remove) sprintf( msg, "REMV %d %d -1#", x, y);
     else sprintf( msg, "DROP %d %d -1#", x, y);
     setNextActionMessage( msg, x, y );
-    if (!remove) nextActionDropping = true;
 }
 
 void LivingLifePage::useTileRelativeToMe( int x, int y ) {

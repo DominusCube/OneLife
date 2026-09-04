@@ -507,6 +507,8 @@ class LivingLifePage : public GamePage, public ActionListener {
         virtual void keybindKeyDown( int inKey );
         virtual void keybindKeyUp( int inKey );
 
+        void addDebugMessage( char *message );
+
         void vogMove( int x, int y );
 
         void vogMoveCamera( float newScreenViewCenterX, float newScreenViewCenterY );
@@ -545,6 +547,9 @@ class LivingLifePage : public GamePage, public ActionListener {
             
 
         void setNextActionMessage( const char* str, int x, int y );
+        bool nextActionIs(const char *);
+        void onDropSent();
+        void onHoldingChange(int previous, int current);
         int getObjId( int mapX, int mapY );
         bool objIdReverseAction( int objId );
         void pickUpBabyInRange();
@@ -553,7 +558,7 @@ class LivingLifePage : public GamePage, public ActionListener {
         void usePocket( int clothingID, bool replace = false, bool remove = false );
         void useOnSelf();
         void takeOffClothing();
-        void takeOffBackpack( int useOrRemove = 0 );
+        void takeOffBackpack();
         void setOurSendPosXY(int &x, int &y);
         void drawTileVanillaHighlight( int x, int y, FloatColor floatColor, bool flashing = false, bool border = true );
         void drawTileVanillaRainbowHighlight( int x, int y );

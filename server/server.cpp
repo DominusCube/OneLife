@@ -5,7 +5,10 @@
 #include <assert.h>
 #include <float.h>
 #include <random>
+
 #include <string>
+#include <regex>
+#include <fstream>
 
 //  <time.h> added to add time stamps to recorded data
 #include <time.h>
@@ -213,6 +216,17 @@ static SimpleVector<char*> youGivingPhrases;
 static SimpleVector<char*> namedGivingPhrases;
 
 
+static std::string format_timestamp(double unix_ts) {
+    std::time_t raw_time = static_cast<std::time_t>(unix_ts);
+    std::tm* time_info = std::gmtime(&raw_time);
+
+    char buffer[20];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", time_info);
+
+    return std::string(buffer);
+}
+
+
 // password-protected objects
 static SimpleVector<char*> passwordProtectingPhrases;
 
@@ -229,85 +243,13 @@ void restorePasswordRecord( int x, int y, unsigned char* passwordChars ) {
     passwordRecord r = { x, y, password };
     passwordRecords.push_back( r );
     }
-    
-//2HOL: <fstream>, <iostream> added to handle restoration of in-game passwords on server restart
-#include <fstream>
-#include <iostream>
-    
-void temp_passwordRecordTransfer() {
-    
-    SimpleVector<passwordRecord> temp_passwordRecords;
-    
-    // look through saved passwords and get ones that belong to the currently processed object kind
-    std::ifstream file;
-    file.open( "2HOL passwords.txt" );
-    if ( !file.is_open() ) return;
-    // parsing 2HOL passwords.txt, the expected format is "id:%i|x:%i|y:%i|word:%s"
-    for ( std::string line; std::getline(file, line); ) {
-        
-        if ( line.find("id:") == std::string::npos ) continue;
-        
-        // int posId = line.find("id:") + 3;
-        // int lenId = line.find("|", posId) - posId;
-        int posX = line.find("x:") + 2;
-        int lenX = line.find("|", posX) - posX;
-        int posY = line.find("y:") + 2;
-        int lenY = line.find("|", posY) - posY;
-        int posPw = line.find("word:") + 5;
-        
-        // int id = stoi(line.substr(posId, lenId));
-        int x = stoi(line.substr(posX, lenX));
-        int y = stoi(line.substr(posY, lenY));
-        std::string pw = line.substr(posPw, line.length());
-        
-        
-        // remove duplicated saved passwords
-        // so only the last row counts
-        for( int i=0; i<temp_passwordRecords.size(); i++ ) {
-            passwordRecord r = temp_passwordRecords.getElementDirect(i);
-            if ( x == r.x && y == r.y ) {
-                temp_passwordRecords.deleteElement(i);
-                break;
-                }
-            }
-        
-        // std::cout << "\nRestoring secret word for object with ID:" << inR->id;
-        
-        char* pwc = new char[48];
-        strcpy (pwc, pw.c_str());
-        
-        passwordRecord r = { x, y, pw };
-        
-        temp_passwordRecords.push_back( r );
-
-        }
-    file.close();
-    
-    for( int i=0; i<temp_passwordRecords.size(); i++ ) {
-        passwordRecord r = temp_passwordRecords.getElementDirect(i);
-        
-        int id = getMapObject( r.x, r.y );
-        ObjectRecord *o = getObject( id );
-        
-        int b = 0;
-        if( o->passwordProtectable ) b = 1;
-        
-        printf( " ========================= %d %d %d %d %s\n", b, id, r.x, r.y, r.password.c_str() );
-        
-        if( o == NULL ) continue;
-        if( !o->passwordProtectable ) continue;
-        
-        passwordRecords.push_back( r );
-        
-        persistentMapDBPut( r.x, r.y, 1, r.password.c_str() );
-        }
-    
-    }    
 
 
 static SimpleVector<char*> infertilityDeclaringPhrases;
 static SimpleVector<char*> fertilityDeclaringPhrases;
 
+
+static SimpleVector<char*> matchingPhrases;
 
 
 
@@ -320,7 +262,7 @@ static char *fertilitySuffix = NULL;
 // messages
 static char allowedSayCharMap[256];
 
-static const char *allowedSayChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-,'?! ";
+static const char *allowedSayChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-,'?!/ 0123456789";
 
 
 static int killEmotionIndex = 2;
@@ -1961,6 +1903,8 @@ void quitCleanup() {
     
     // password-protected objects
     passwordProtectingPhrases.deallocateStringElements();
+
+    matchingPhrases.deallocateStringElements();
     
     if( curseYouPhrase != NULL ) {
         delete [] curseYouPhrase;
@@ -2508,20 +2452,11 @@ ClientMessage parseMessage( LiveObject *inPlayer, char *inMessage ) {
     else if( strcmp( nameBuffer, "SELF" ) == 0 ) {
         m.type = SELF;
 
-        // abusing the c field here for extra parameter
-        // 0 means old behavior
-        // -1 means remove clothing content only
-        // -2 means transform clothing only e.g. remove sword from backpack
-        // -3 means remove clothing only
-
         numRead = sscanf( inMessage, 
-                          "%99s %d %d %d %d", 
-                          nameBuffer, &( m.x ), &( m.y ), &( m.i ), &( m.c ) );
+                          "%99s %d %d %d", 
+                          nameBuffer, &( m.x ), &( m.y ), &( m.i ) );
         
-        if( numRead == 4 ) {
-            m.c = 0;
-            }
-        else if( numRead != 5 ) {
+        if( numRead != 4 ) {
             m.type = UNKNOWN;
             }
         }
@@ -4664,6 +4599,65 @@ void checkCustomGlobalMessage() {
         }
     
     delete [] message;
+    }
+
+
+void checkCustomExecution() {
+    
+    char *content = 
+        SettingsManager::getSettingContents( "customExecution", 
+                                             "" );
+    if( strcmp( content, "" ) != 0 ) {
+
+        int numLines;
+        
+        char **lines = split( content, "\n", &numLines );
+
+        for( int i=0; i<numLines; i++ ) {
+
+            char inputBuff[100] = {0};
+            int mode = 0;
+            if( sscanf( lines[i], "%d %99[^\n]", &mode, inputBuff ) < 1 ) {
+                delete [] lines[i];
+                continue;
+                }
+
+            LiveObject *target = NULL;
+
+            try {
+                int pid = 0; 
+                if( mode == 0 ) pid = std::stoi(inputBuff);
+
+                for( int j = 0; j < players.size(); j++ ) {
+                    LiveObject *player = players.getElement( j );
+                    if( player == NULL ) continue;
+                    if( 
+                        (mode == 0 && player->id == pid) ||
+                        (mode == 1 && player->name != NULL && strcmp( player->name, inputBuff ) == 0) ||
+                        (mode == 2 && player->email != NULL && strcmp( player->email, inputBuff ) == 0)
+                    ) {
+                        target = player;
+                        break;
+                        }
+                    }
+                }
+            catch (...) {
+                }
+
+            if( target != NULL ) {
+                setDeathReason( target, "customExecution" );
+                target->error = true;
+                target->errorCauseString = "CustomExecution";
+                }
+
+            delete [] lines[i];
+            }
+        delete [] lines;
+
+        SettingsManager::setSetting( "customExecution", "" );
+        }
+    
+    delete [] content;
     }
 
 
@@ -7786,6 +7780,11 @@ int processLoggedInPlayer( char inAllowReconnect,
     
 
 
+    if( connection->hashedSpawnSeed != 0 && SettingsManager::getIntSetting( "forceEveOnSeededSpawn", 0 ) ) {
+        parentChoices.deleteAll();
+        numBirthLocationsCurseBlocked = 0;
+        }
+    
     if( parentChoices.size() == 0 && numBirthLocationsCurseBlocked > 0 ) {
         // they are blocked from being born EVERYWHERE by curses
 
@@ -7796,6 +7795,8 @@ int processLoggedInPlayer( char inAllowReconnect,
         // d-town
         inCurseStatus.curseLevel = 1;
         inCurseStatus.excessPoints = 1;
+        newObject.curseStatus.curseLevel = 1;
+        newObject.curseStatus.excessPoints = 1;
         }
 
     
@@ -7839,10 +7840,6 @@ int processLoggedInPlayer( char inAllowReconnect,
         if( forceSpawn ) {
             parentChoices.deleteAll();
             }
-        }
-        
-    if( connection->hashedSpawnSeed != 0 && SettingsManager::getIntSetting( "forceEveOnSeededSpawn", 0 ) ) {
-        parentChoices.deleteAll();
         }
 
 
@@ -8407,10 +8404,10 @@ int processLoggedInPlayer( char inAllowReconnect,
             }
         }
     
-    if ( SettingsManager::getIntSetting( "randomisePlayersObject", 0 ) ) {
+    if ( inForceDisplayID == -1 && SettingsManager::getIntSetting( "randomisePlayersObject", 0 ) ) {
         SimpleVector<int> *objectsPool =
             SettingsManager::getIntSettingMulti( "randomisePlayersObjectPool" );
-        ObjectRecord *randomObject;
+        ObjectRecord *randomObject = NULL;
         int randomObjectIndex;
         int objectPoolSize = objectsPool->size();
         while ( randomObject == NULL ) {
@@ -9582,8 +9579,29 @@ char containmentPermitted( int inContainerID, int inContainedID ) {
                 CategoryRecord *containedCategory = getCategory( containedCID );
                 if( containedCategory == NULL ) continue;
                 int containedPID = containedCategory->parentID;
-                
-                if( isContainmentWithMatchedTags( containerPID, containedPID ) ) return true;
+
+                if( isContainmentWithMatchedTags( containerPID, containedPID ) ) {
+
+                    // in case either category is a containabilitySet
+                    // check that the role of the object in that set matches
+                    // what we have here
+
+                    char isContainer = true;
+                    char isContainee = true;
+
+                    if( containerCategory->isContainabilitySet ) {
+                        int containerIndex = containerCategory->objectIDSet.getElementIndex( inContainerID );
+                        float containerWeight = containerCategory->objectWeights.getElementDirect( containerIndex );
+                        isContainer = containerWeight == 1.0f;
+                    }
+                    if( containedCategory->isContainabilitySet ) {
+                        int containeeIndex = containedCategory->objectIDSet.getElementIndex( inContainedID );
+                        float containeeWeight = containedCategory->objectWeights.getElementDirect( containeeIndex );
+                        isContainee = containeeWeight == 0.0f;
+                    }
+
+                    if( isContainer && isContainee ) return true;
+                }
             }
         }
     } else if ( containerRecord != NULL ) {
@@ -13949,6 +13967,8 @@ int main() {
 
             
             checkCustomGlobalMessage();
+
+            checkCustomExecution();
             
 
             int lowestCravingID = INT_MAX;
@@ -13978,6 +13998,26 @@ int main() {
                     }
                 }
             purgeStaleCravings( lowestCravingID );
+
+            matchingPhrases.deallocateStringElements();
+
+            char *cont = SettingsManager::getSettingContents( "matchingPhrases", "" );
+            
+            if( strcmp( cont, "" ) != 0 ) {
+                int numParts;
+                char **parts = split( cont, "\n", &numParts );
+                
+                
+                for( int i=0; i<numParts; i++ ) {
+                    if( strcmp( parts[i], "" ) != 0 ) {
+                        matchingPhrases.push_back( stringDuplicate(parts[i]) );
+                        }
+                    delete [] parts[i];
+                    }
+                delete [] parts;
+                }
+            delete [] cont;
+
             }
         
         
@@ -17335,7 +17375,29 @@ int main() {
                         
                         delete [] m.saidText;
                         m.saidText = cleanedString;
-                        
+
+
+                        bool matched = false;
+
+                        for( int i=0; i<matchingPhrases.size(); i++ ) {
+                            char *matchingPhrase = matchingPhrases.getElementDirect( i );
+                            std::regex re( matchingPhrase );
+                            if (std::regex_search(m.saidText, re)) {
+                                matched = true;
+
+                                std::ofstream ofs( "matchingLog.txt", std::ios_base::app);
+                                std::string timeString = format_timestamp( Time::getCurrentTime() );
+                                ofs << timeString;
+                                ofs << " ";
+                                ofs << autoSprintf( "%d", nextPlayer->id );
+                                ofs << " ";
+                                ofs << autoSprintf( "%s", m.saidText );
+                                ofs << std::endl;
+                                ofs.close();
+
+                                }
+
+                            }
                         
                         if( nextPlayer->ownedPositions.size() > 0 ) {
                             // consider phrases that assign ownership
@@ -17583,7 +17645,7 @@ int main() {
                             unsigned char metaData[ MAP_METADATA_LENGTH ];
                             int len = strlen( m.saidText );
                             
-                            if( strcmp( m.saidText, "" ) != 0 )
+                            if( strcmp( m.saidText, "" ) != 0 && !matched )
                             if( nextPlayer->holdingID > 0 &&
                                 len < MAP_METADATA_LENGTH &&
                                 getObject( 
@@ -17682,7 +17744,7 @@ int main() {
                         char *cleanSay = trimWhitespace( m.saidText );
                         
                         if( strcmp( cleanSay, "" ) != 0 ) {
-                            makePlayerSay( nextPlayer, cleanSay );
+                            makePlayerSay( nextPlayer, cleanSay, matched );
                             }
                         delete [] cleanSay;
                         }
@@ -19450,10 +19512,7 @@ int main() {
                                                 }
                                             handleHoldingChange( nextPlayer,
                                                                  r->newActor );
-                                            
-                                            setHeldGraveOrigin( nextPlayer, 
-                                                                m.x, m.y,
-                                                                resultID );
+                                                                 
                                             }
                                         else {
                                             // changing floor to non-floor
@@ -19473,9 +19532,7 @@ int main() {
                                                 handleHoldingChange( 
                                                     nextPlayer,
                                                     r->newActor );
-                                                setHeldGraveOrigin( nextPlayer, 
-                                                                    m.x, m.y,
-                                                                    resultID );
+
                                                 }
                                             }
                                         }
@@ -20496,10 +20553,7 @@ int main() {
                                 
 
                                 if( targetPlayer == nextPlayer &&
-                                    bareHandClothingTrans != NULL &&
-                                    m.c != -1 && // player only wants clothing content
-                                    m.c != -3 // player only wants the clothing itself
-                                    ) {
+                                    bareHandClothingTrans != NULL ) {
                                     
                                     // bare hand transforms clothing
                                     
@@ -20537,10 +20591,7 @@ int main() {
                                             deleteAll();
                                         }
                                     }
-                                else if( clothingSlot != NULL &&
-                                         m.c != -1 && // player only wants clothing content
-                                         m.c != -2 // player only wants to transform clothing
-                                         ) {
+                                else if( clothingSlot != NULL ) {
                                     // bare hand removes clothing
                                     
                                     removeClothingToHold( nextPlayer,
@@ -21095,10 +21146,7 @@ int main() {
                         
                         if( nextPlayer->holdingID == 0 && 
                             m.c >= 0 && m.c < NUM_CLOTHING_PIECES  &&
-                            ! worked &&
-                            // -2 means player only wants clothing content
-                            m.i != -2
-                            ) {
+                            ! worked ) {
 
                             // hmm... nothing to remove from slots in clothing
                             
