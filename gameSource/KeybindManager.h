@@ -96,6 +96,7 @@ class KeybindManager {
         static char sInited;
         static char sKeysInited;
         static char sPressed[KEYBIND_KEY_TABLE_SIZE];
+        static int sLastKeyDown;
         static NamedKeyEntry sNamedKeys[KEYBIND_KEY_TABLE_SIZE];
         static std::unordered_map<std::string, int> sNameToKey;
 

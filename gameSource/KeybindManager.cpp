@@ -12,6 +12,7 @@ SimpleVector<KeybindRecord *> KeybindManager::sActions;
 char KeybindManager::sInited = false;
 char KeybindManager::sKeysInited = false;
 char KeybindManager::sPressed[KEYBIND_KEY_TABLE_SIZE] = {};
+int KeybindManager::sLastKeyDown = -1;
 NamedKeyEntry KeybindManager::sNamedKeys[KEYBIND_KEY_TABLE_SIZE] = {};
 std::unordered_map<std::string, int> KeybindManager::sNameToKey;
 
@@ -282,10 +283,13 @@ char KeybindManager::checkActive( const char *inActionName, char inStrict ) {
     }
 
 char KeybindManager::isActive( const char *inActionName ) {
+    KeybindRecord *r = findAction( inActionName );
+    if ( r == NULL ) return false;
+    if ( r->options.type != MODIFIER_ONLY && r->key != sLastKeyDown ) return false;
+
     if ( checkActive( inActionName, true ) ) return true;
     if ( !checkActive( inActionName, false ) ) return false;  
 
-    KeybindRecord *r = findAction( inActionName );
     char shiftDown = isShiftKeyDown();
     char ctrlDown = isControlKeyDown();
     char altDown = isAltKeyDown();
@@ -310,6 +314,7 @@ char KeybindManager::isReleased( const char *inActionName ) {
 
 void KeybindManager::keyDown( int inKey ) {
     sPressed[inKey] = true;
+    sLastKeyDown = inKey;
     }
 
 void KeybindManager::keyUp( int inKey ) {
